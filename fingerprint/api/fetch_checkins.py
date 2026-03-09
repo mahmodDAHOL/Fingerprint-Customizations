@@ -123,8 +123,8 @@ def add_punch_direction(device_attendance_logs):
         day_logs_sorted = sorted(day_logs, key=lambda x: x['timestamp'])
         
         # Default: mark all as 'OTHER' first
-        for log in day_logs_sorted:
-            log['log_type'] = 'OTHER'
+        # for log in day_logs_sorted:
+        #     log['log_type'] = 'OTHER'
 
         # if len(day_logs_sorted)>2:
         #     print(day_logs_sorted)
@@ -221,7 +221,6 @@ def merge_json_files(file_paths):
                 continue
 
             data = json.loads(content)
-
             # Ensure data is a list (for safe concatenation)
             if isinstance(data, list):
                 merged_data.extend(data)
@@ -334,7 +333,7 @@ def fetch_checkins(import_start_date, import_end_date, company='Ministry of Info
     fingerprint_file_paths = [
         os.path.join(files_dir, f)
         for f in os.listdir(files_dir)
-        if f.endswith("_last_fetch_dump.json") and company in f
+        if "_last_fetch_dump" in f and company in f
     ]
 
     req_files_found = True
@@ -349,4 +348,11 @@ def fetch_checkins(import_start_date, import_end_date, company='Ministry of Info
         
 @frappe.whitelist()
 def get_app_info():
-    return {"app_path": frappe.get_app_path("fingerprint")}
+    """Return fingerprint app path and info"""
+    # Get the absolute path to the fingerprint app directory
+    app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    
+    return {
+        "app_path": app_path,  # e.g., /home/user/frappe-bench/apps/fingerprint
+        "app_name": "fingerprint"
+    }

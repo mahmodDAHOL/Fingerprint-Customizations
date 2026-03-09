@@ -172,7 +172,6 @@ class ShiftType(Document):
 				"device_id",
 			],
 			filters={
-				"skip_auto_attendance": 0,
 				"attendance": ("is", "not set"),
 				"time": (">=", self.process_attendance_after),
 				"shift_actual_end": ("<", self.last_sync_of_checkin),

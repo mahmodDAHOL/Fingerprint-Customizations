@@ -88,16 +88,69 @@ def get_all_attendance_from_device(
     return "success"
 
 def upload_fingerprint_records(devices, url, session):
-
-
+    """
+    Upload fingerprint/attendance dump files to ERPNext.
+    Deletes existing server-side attachment for the same docname+fieldname before uploading.
+    
+    Args:
+        devices: list of device dicts with 'id' and 'ip'
+        url: ERPNext site URL
+        session: authenticated requests.Session
+        target_doctype: The DocType name that device['id'] belongs to (e.g., "Device", "Attendance Log")
+    """
+    target_doctype="Fingerprint"
     for device in devices:
         try:
-            # File to upload
-            file_path = (
-                f"logs/{device['id']}_{device['ip'].replace('.','_')}_last_fetch_dump.json"
-            )
-            info_logger.info(file_path)
-            # Upload the file
+            file_path = f"logs/{device['id']}_{device['ip'].replace('.','_')}_last_fetch_dump.json"
+            
+            # Check if local file exists
+            if not os.path.exists(file_path):
+                info_logger.info(f"Local file not found, skipping: {file_path}")
+                print(Fore.YELLOW + f"File not found: {file_path}" + Style.RESET_ALL)
+                continue
+
+            fieldname = f"attach_{device['id']}_data".lower().replace(" ","_")
+            docname = 'eg2g83k1ar'
+
+            # === STEP 1: DELETE EXISTING FILE ON SERVER ===
+            try:
+                # Build filters as JSON string for Frappe API
+                filters = json.dumps([
+                    ["attached_to_doctype", "=", target_doctype],
+                    ["attached_to_name", "=", docname],
+                    ["attached_to_field", "=", fieldname]
+                ])
+                
+                # Query existing files
+                resp = session.get(
+                    f"{url}/api/resource/File",
+                    params={"filters": filters},
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    existing_files = resp.json().get("data", [])
+                    for file_doc in existing_files:
+                        file_name = file_doc.get("name")  # File document name (ID)
+                        delete_resp = session.delete(
+                            f"{url}/api/resource/File/{file_name}",
+                            timeout=30
+                        )
+                        if delete_resp.status_code in [200, 202]:
+                            info_logger.info(f"Deleted existing server file: {file_name}")
+                        else:
+                            error_logger.warning(
+                                f"Failed to delete server file {file_name}: {delete_resp.status_code} - {delete_resp.text}"
+                            )
+                else:
+                    error_logger.warning(
+                        f"Could not query existing files: {resp.status_code} - {resp.text}"
+                    )
+            except Exception as e:
+                error_logger.exception(f"Error during server file cleanup for {device['ip']}: {e}")
+                # Continue anyway - upload might still succeed
+
+            # === STEP 2: UPLOAD NEW FILE ===
+            info_logger.info(f"Uploading file: {file_path}")
             with open(file_path, "rb") as f:
                 files = {
                     "file": (
@@ -107,32 +160,42 @@ def upload_fingerprint_records(devices, url, session):
                     )
                 }
                 data = {
-                    "is_private": 1,  # 1 = private, 0 = public
-                    "fieldname": f"attach_{device['id']}_data",  # The field in the doctype that holds the attachment
+                    "is_private": 1,
+                    "fieldname": fieldname,
+                    "docname": docname,
+                    "doctype": target_doctype,  # Critical for proper linking
                 }
 
                 response = session.post(
-                    f"{url}/api/method/upload_file", files=files, data=data
+                    f"{url}/api/method/upload_file", 
+                    files=files, 
+                    data=data,
+                    timeout=60
                 )
 
-            # Check result
+            # === STEP 3: HANDLE UPLOAD RESULT ===
             if response.status_code == 200:
                 result = response.json()
                 if result.get("message"):
                     file_url = result["message"]["file_url"]
-                    
                     info_logger.info(f"File uploaded successfully: {file_url}")
+                    print(Fore.GREEN + f"Uploaded: {device['ip']}" + Style.RESET_ALL)
+                    
+                    # Optional: delete local file after successful server upload
+                    # os.remove(file_path)
                 else:
-                    info_logger.info("Upload failed:", result)
+                    error_logger.error(f"Upload failed (no message): {result}")
+                    print(Fore.RED + f"Upload failed: {device['ip']}" + Style.RESET_ALL)
             else:
-                info_logger.info("HTTP Error:", response.status_code, response.text)
+                error_logger.error(f"HTTP {response.status_code}: {response.text}")
+                print(Fore.RED + f"HTTP {response.status_code} for {device['ip']}" + Style.RESET_ALL)
                 
-            info_logger.info(f" records uploaded successfully from {device['ip']}")
-            print(f" records uploaded successfully from {device['ip']}")
+        except FileNotFoundError:
+            error_logger.exception(f"Local file not found: {file_path}")
+            print(Fore.RED + f"File not found: {file_path}" + Style.RESET_ALL)
         except Exception as e:
-            info_logger.info(f"failed to upload records from {device['ip']}")
-            print(Fore.RED + f"failed to upload records from {device['ip']}" + Style.RESET_ALL)
-
+            error_logger.exception(f"Unexpected error uploading {device['ip']}")
+            print(Fore.RED + f"Error uploading {device['ip']}" + Style.RESET_ALL)
 
 
 url = "https://moi-mis.gov.sy"
@@ -160,7 +223,7 @@ for device_number, device_ip in enumerate(devices_ips, 1):
 
 
 all_success = True  # Flag to track success
-print(f"IPs: {devices_ips} | Company: {company}")
+print(f"{devices_ips} | {company}")
 for device in devices:
     try:
         res = get_all_attendance_from_device(
